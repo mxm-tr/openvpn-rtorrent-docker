@@ -1,0 +1,164 @@
+version: '3.4'
+
+services:
+
+  # UNCOMMENT TO TEST WITH A LOCAL OPENVPN SERVER
+  # ------ FROM HERE ------
+  # openvpn-server:
+  #   cap_add:
+  #    - NET_ADMIN
+  #   build: ./docker-images/openvpn-server
+  #   container_name: openvpn-server
+  #   ports:
+  #    - "1194:1194/udp"
+  #   sysctls:
+  #     net.ipv6.conf.all.disable_ipv6: 0
+  #     net.ipv6.conf.all.forwarding: 1
+  #   restart: always
+  #   volumes:
+  #    - ./openvpn-data/server-conf:/etc/openvpn
+  #    - ./openvpn-data/client-conf:/etc/openvpn/ccd
+  #   command: >
+  #     bash -c "ovpn_getclient vpn > /etc/openvpn/ccd/vpn.ovpn
+  #     && ovpn_run"
+  #   networks:
+  #     - local
+  # ------ TO HERE ------
+
+  # This service sets up a firewall which only allows traffic to the docker
+  # network and the specified destination (ip, port protocol). See its repo for
+  # more information: https://github.com/0xcaff/docker-simple-firewall
+  firewall:
+    build: ./docker-images/firewall
+
+    # Needed by the image to setup the fireall.
+    cap_add:
+      - net_admin
+
+    # The DNS servers which are used through the VPN.
+    dns:
+      - 8.8.8.8
+      - 8.8.4.4
+
+    environment:
+      # The only address, port and protocol combination allowed through the
+      # firewall. This should be the address, port and protocol of the VPN
+      # service.
+      ALLOW_IP_ADDRESS: 172.30.0.3 # Local OpenVPN Server
+      ALLOW_PORT: 1194
+      ALLOW_PROTO: udp
+
+      # TCP connections will be accepted at this port once the firewall is
+      # configured.
+      FIREWALL_READY_SIGNAL_PORT: 60000
+
+    # The only traffic allowed out of this container is traffic to this network
+    # and traffic to the specified ip address.
+    networks:
+      - local
+
+  # A service which creates an openvpn tunnel. Check out its repo for more
+  # information: https://github.com/0xcaff/docker-openvpn-client
+  openvpn-client:
+    depends_on:
+      - firewall
+    build: ./docker-images/openvpn-client
+
+    # Needed for OpenVPN to work.
+    cap_add:
+      - net_admin
+    devices:
+      - /dev/net/tun
+
+    # Share the network stack of the firewall client container. When this
+    # container binds ports, they can be reached through the "firewall" service.
+    network_mode: service:firewall
+
+    volumes:
+      # This is the wait-for script from https://github.com/Eficode/wait-for. It
+      # is used to ensure that the VPN only starts after the firewall is
+      # configured. This is done so if the VPN tries to connect to a non-allowed
+      # address the failure is fast.
+      - ./assets/wait-for/wait-for:/wait-for
+
+      # The VPN configuration file.
+      - ./openvpn-data/client-conf:/vpn/config
+
+    # Start openvpn after the firewall is done.
+    command: openvpn --config /vpn/config/vpn.ovpn
+    # command: > 
+    #   sh -c 'echo "0.0.0.0 openvpn-server" >> /etc/hosts \
+    #   && openvpn --config /vpn/config/vpn.ovpn'
+
+  # A service with the rtorrent torrent client. See the repository for more
+  # information: https://github.com/StayPirate/alpine-rtorrent
+  rtorrent:
+    depends_on:
+      - firewall
+    build: ./docker-images/rtorrent
+
+    # Share the network stack of the firewall client container. When this
+    # container binds ports, they can be reached through the "firewall" service.
+    network_mode: service:firewall
+
+    # SCGI is exposed on port 5000.
+
+    volumes:
+      # rTorrent configuration file.
+      - ./rtorrent.rc:/home/rtorrent/.rtorrent.rc
+
+      # rTorrent persistant state.
+      - ./downloaded:/home/rtorrent/rtorrent/download
+      - ./rtorrent-data:/data
+      # - session:/home/rtorrent/rtorrent/.session
+
+      # This is the wait-for script from https://github.com/Eficode/wait-for. It
+      # is used to ensure that the rtorrent starts only after the firewall is
+      # initialized.
+      - ./assets/wait-for/wait-for:/wait-for
+
+    # Waits for the firewall to be set up before running rtorrent. The VPN may
+    # or may not be ready but no traffic will be leaked because of the firewall.
+    entrypoint: "/bin/sh"
+    command: "/wait-for localhost:60000 -- rtorrent"
+
+  # A service containing flood, a web interface for rtorrent.
+  flood:
+    build: docker-images/flood
+    depends_on:
+      - rtorrent
+
+    environment:
+      # Configuration for flood. Check out this file for all possible
+      # configuration options:
+      # https://github.com/jfurrow/flood/blob/master/config.docker.js
+      #
+      # The host and port the rTorrent SCGI API can be reached at.
+      RTORRENT_SCGI_HOST: firewall
+      RTORRENT_SCGI_PORT: 5000
+
+    volumes:
+      - flood:/data
+
+    # Expose the flood web interface port.
+    ports:
+      - 3000:3000
+
+    # The firewall destination (vpn, firewall, rtorrent) is only accessible
+    # through the local network.
+    networks:
+      - local
+
+volumes:
+  downloaded:
+    driver: local
+
+  session:
+    driver: local
+
+  flood:
+    driver: local
+
+networks:
+  # A network for connecting local services.
+  local:

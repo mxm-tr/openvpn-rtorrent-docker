@@ -1,0 +1,18 @@
+[submodule "docker-images/firewall"]
+	path = docker-images/firewall
+	url = https://github.com/0xcaff/docker-simple-firewall
+[submodule "docker-images/openvpn-client"]
+	path = docker-images/openvpn-client
+	url = https://github.com/0xcaff/docker-openvpn-client
+[submodule "assets/wait-for"]
+	path = assets/wait-for
+	url = https://github.com/Eficode/wait-for
+[submodule "docker-images/flood"]
+	path = docker-images/flood
+	url = https://github.com/Flood-UI/flood
+[submodule "docker-images/openvpn-server"]
+	path = docker-images/openvpn-server
+	url = https://github.com/kylemanna/docker-openvpn
+[submodule "docker-images/rtorrent"]
+	path = docker-images/rtorrent
+	url = https://github.com/StayPirate/alpine-rtorrent
